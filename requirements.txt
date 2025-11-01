@@ -1,5 +1,4 @@
 nba_api
 pandas
-time
 streamlit
 streamlit_searchbox 
