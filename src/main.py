@@ -185,9 +185,13 @@ if st.button("Calculate Probabilities", type="primary"):
                                     "Pick": f"pick {pick.pick_number}",
                                     "Player": pick.player,
                                     "Stat": pick.stat_type,
-                                    "Threshold": f"{pick.prediction} {pick.threshold}",
+                                    "Threshold": (
+                                        f"{pick.prediction} {pick.threshold}"
+                                    ),
                                     "Probability": f"{result.probability:.1%}",
-                                    "Hit Rate": f"{result.games_met}/{result.total_games}",
+                                    "Hit Rate": (
+                                        f"{result.games_met}/" f"{result.total_games}"
+                                    ),
                                     "Avg": f"{result.mean:.1f}",
                                 }
                             )
