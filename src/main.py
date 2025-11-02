@@ -7,14 +7,31 @@ that multiple NBA player prop bets will all hit based on historical data.
 
 import pandas as pd
 import streamlit as st
+from pydantic import BaseModel, ConfigDict
 from streamlit_searchbox import st_searchbox
 
 from functions import (
+    PredictionType,
+    StatType,
     calculate_probability,
     get_last_n_games,
     get_player_id,
     search_players,
 )
+
+
+# Pydantic models for picks
+class PickData(BaseModel):
+    """Pydantic model for individual player pick data."""
+
+    model_config = ConfigDict(frozen=True)
+
+    player: str
+    stat_type: StatType
+    threshold: float
+    prediction: PredictionType
+    pick_number: int
+
 
 # Streamlit App
 st.title("NBA Multi-Player Prop Probability Calculator")
@@ -25,7 +42,7 @@ st.write(
 )
 
 # Configuration
-n_games = st.slider(
+n_games: int = st.slider(
     "Number of recent games to analyze:",
     min_value=5,
     max_value=20,
@@ -35,8 +52,8 @@ n_games = st.slider(
 st.divider()
 
 # Player input arrays
-options = ["Less", "More"]
-player_input_keys = [
+options: list[PredictionType] = ["Less", "More"]
+player_input_keys: list[str] = [
     "player_searchbox_1",
     "player_searchbox_2",
     "player_searchbox_3",
@@ -44,7 +61,7 @@ player_input_keys = [
     "player_searchbox_5",
     "player_searchbox_6",
 ]
-number_input_strings = [
+number_input_strings: list[str] = [
     "Input first pick",
     "Input second pick",
     "Input third pick",
@@ -52,8 +69,15 @@ number_input_strings = [
     "Input fifth pick",
     "Input sixth pick",
 ]
-type_input_keys = ["type_1", "type_2", "type_3", "type_4", "type_5", "type_6"]
-prediction_input_keys = [
+type_input_keys: list[str] = [
+    "type_1",
+    "type_2",
+    "type_3",
+    "type_4",
+    "type_5",
+    "type_6",
+]
+prediction_input_keys: list[str] = [
     "prediction_pill_1",
     "prediction_pill_2",
     "prediction_pill_3",
@@ -63,7 +87,7 @@ prediction_input_keys = [
 ]
 
 # Store picks
-picks = []
+picks: list[PickData] = []
 
 for idx, (
     player_input_key,
@@ -118,13 +142,13 @@ for idx, (
         # Store pick if player is selected
         if player and prediction and threshold > 0:
             picks.append(
-                {
-                    "player": player,
-                    "stat_type": stat_type,
-                    "threshold": threshold,
-                    "prediction": prediction,
-                    "pick_number": idx,
-                }
+                PickData(
+                    player=player,
+                    stat_type=stat_type,
+                    threshold=threshold,
+                    prediction=prediction,
+                    pick_number=idx,
+                )
             )
 
     st.divider()
@@ -136,40 +160,35 @@ if st.button("Calculate Probabilities", type="primary"):
     else:
         st.subheader(f"Analyzing {len(picks)} Pick(s)")
 
-        individual_probabilities = []
-        results_data = []
+        individual_probabilities: list[float] = []
+        results_data: list[dict[str, str]] = []
 
         with st.spinner("Fetching player data..."):
             for pick in picks:
-                player_id = get_player_id(pick["player"])
+                player_id: int | None = get_player_id(pick.player)
 
                 if player_id:
-                    games_df = get_last_n_games(player_id, n_games)
+                    games_df: pd.DataFrame | None = get_last_n_games(player_id, n_games)
 
                     if games_df is not None and not games_df.empty:
                         result = calculate_probability(
                             games_df,
-                            pick["stat_type"],
-                            pick["threshold"],
-                            pick["prediction"],
+                            pick.stat_type,
+                            pick.threshold,
+                            pick.prediction,
                         )
 
                         if result:
-                            individual_probabilities.append(result["probability"])
+                            individual_probabilities.append(result.probability)
                             results_data.append(
                                 {
-                                    "Pick": f'pick {pick["pick_number"]}',
-                                    "Player": pick["player"],
-                                    "Stat": pick["stat_type"],
-                                    "Threshold": (
-                                        f'{pick["prediction"]} {pick["threshold"]}'
-                                    ),
-                                    "Probability": f'{result["probability"]:.1%}',
-                                    "Hit Rate": (
-                                        f'{result["games_met"]}/'
-                                        f'{result["total_games"]}'
-                                    ),
-                                    "Avg": f'{result["mean"]:.1f}',
+                                    "Pick": f"pick {pick.pick_number}",
+                                    "Player": pick.player,
+                                    "Stat": pick.stat_type,
+                                    "Threshold": f"{pick.prediction} {pick.threshold}",
+                                    "Probability": f"{result.probability:.1%}",
+                                    "Hit Rate": f"{result.games_met}/{result.total_games}",
+                                    "Avg": f"{result.mean:.1f}",
                                 }
                             )
 

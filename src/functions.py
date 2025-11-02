@@ -6,36 +6,85 @@ and calculating prop bet probabilities based on historical performance.
 """
 
 import time
+from typing import Literal
 
+import pandas as pd
 import streamlit as st
 from nba_api.stats.endpoints import playergamelog
 from nba_api.stats.static import players
+from pydantic import BaseModel, ConfigDict
 
-# Get all NBA players
-all_players = players.get_players()
-player_names = [player["full_name"] for player in all_players]
+# Type definitions
+StatType = Literal[
+    "Points",
+    "Rebounds",
+    "Assists",
+    "3-PT-Made",
+    "Pts+Rebs+Asts",
+    "Pts+Asts",
+    "FG Made",
+    "Fantasy Score",
+]
+
+PredictionType = Literal["More", "Less"]
+
+
+class PlayerInfo(BaseModel):
+    """Pydantic model for NBA player information."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    full_name: str
+    first_name: str
+    last_name: str
+    is_active: bool
+
+
+class ProbabilityResult(BaseModel):
+    """Pydantic model for probability calculation results."""
+
+    model_config = ConfigDict(frozen=True)
+
+    probability: float
+    games_met: int
+    total_games: int
+    mean: float
+    median: float
+    std: float
+    min: float
+    max: float
+    stat_values: list[float]  # Converting pd.Series to list for JSON serialization
+
+
+# Get all NBA players - converting dict data to Pydantic models
+_raw_players = players.get_players()
+all_players: list[PlayerInfo] = [PlayerInfo(**player) for player in _raw_players]
+player_names: list[str] = [player.full_name for player in all_players]
 
 if "player_results" not in st.session_state:
     st.session_state.player_results = {}
 
 
-def search_players(searchterm: str):
-    """Search function for player autocomplete"""
+def search_players(searchterm: str) -> list[str]:
+    """Search function for player autocomplete."""
     if not searchterm:
         return []
     return [name for name in player_names if searchterm.lower() in name.lower()][:10]
 
 
-def get_player_id(player_name):
-    """Get player ID from name"""
-
-    player = [p for p in all_players if p["full_name"].lower() == player_name.lower()]
+def get_player_id(player_name: str) -> int | None:
+    """Get player ID from name."""
+    player = [p for p in all_players if p.full_name.lower() == player_name.lower()]
     if player:
-        return player[0]["id"]
+        return player[0].id
+    return None
 
 
-def get_last_n_games(player_id, n_games=10, season="2024-25"):
-    """Get last N games for a player"""
+def get_last_n_games(
+    player_id: int, n_games: int = 10, season: str = "2024-25"
+) -> pd.DataFrame | None:
+    """Get last N games for a player."""
     try:
         time.sleep(0.6)  # Rate limit
 
@@ -50,9 +99,9 @@ def get_last_n_games(player_id, n_games=10, season="2024-25"):
         return None
 
 
-def calculate_stat_value(games_df, stat_type):
-    """Calculate the stat value based on stat type"""
-    stat_mapping = {
+def calculate_stat_value(games_df: pd.DataFrame, stat_type: StatType) -> pd.Series:
+    """Calculate the stat value based on stat type."""
+    stat_mapping: dict[str, str] = {
         "Points": "PTS",
         "Rebounds": "REB",
         "Assists": "AST",
@@ -70,8 +119,13 @@ def calculate_stat_value(games_df, stat_type):
         return games_df[stat_mapping.get(stat_type, "PTS")]
 
 
-def calculate_probability(games_df, stat_type, threshold, prediction_type):
-    """Calculate probability based on stat type and prediction (More/Less)"""
+def calculate_probability(
+    games_df: pd.DataFrame | None,
+    stat_type: StatType,
+    threshold: int | float,
+    prediction_type: PredictionType,
+) -> ProbabilityResult | None:
+    """Calculate probability based on stat type and prediction (More/Less)."""
     if games_df is None or games_df.empty:
         return None
 
@@ -86,14 +140,14 @@ def calculate_probability(games_df, stat_type, threshold, prediction_type):
     total_games = len(games_df)
     probability = games_met_threshold / total_games
 
-    return {
-        "probability": probability,
-        "games_met": games_met_threshold,
-        "total_games": total_games,
-        "mean": stat_values.mean(),
-        "median": stat_values.median(),
-        "std": stat_values.std(),
-        "min": stat_values.min(),
-        "max": stat_values.max(),
-        "stat_values": stat_values,
-    }
+    return ProbabilityResult(
+        probability=probability,
+        games_met=games_met_threshold,
+        total_games=total_games,
+        mean=stat_values.mean(),
+        median=stat_values.median(),
+        std=stat_values.std(),
+        min=stat_values.min(),
+        max=stat_values.max(),
+        stat_values=stat_values.tolist(),
+    )
