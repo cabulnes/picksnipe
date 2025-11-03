@@ -115,6 +115,10 @@ def calculate_stat_value(games_df: pd.DataFrame, stat_type: StatType) -> pd.Seri
         return games_df["PTS"] + games_df["REB"] + games_df["AST"]
     elif stat_type == "Pts+Asts":
         return games_df["PTS"] + games_df["AST"]
+    elif stat_type == "Pts+Rebs":
+        return games_df["PTS"] + games_df["REB"]
+    elif stat_type == "Rebs+Asts":
+        return games_df["REB"] + games_df["AST"]
     else:
         return games_df[stat_mapping.get(stat_type, "PTS")]
 

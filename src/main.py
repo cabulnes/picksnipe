@@ -9,10 +9,12 @@ import pandas as pd
 import streamlit as st
 from pydantic import BaseModel, ConfigDict
 from streamlit_searchbox import st_searchbox
+import plotly.graph_objects as go
 
 from functions import (
     PredictionType,
     StatType,
+    ProbabilityResult,
     calculate_probability,
     get_last_n_games,
     get_player_id,
@@ -31,6 +33,19 @@ class PickData(BaseModel):
     threshold: float
     prediction: PredictionType
     pick_number: int
+
+
+class DetailedResult(BaseModel):
+    """Pydantic model for detailed results including pick and probability data."""
+
+    model_config = ConfigDict(frozen=False, arbitrary_types_allowed=True)
+
+    pick: PickData
+    result: ProbabilityResult
+    games_df: pd.DataFrame
+
+    #class Config:
+    #    arbitrary_types_allowed = True
 
 
 # Streamlit App
@@ -115,10 +130,12 @@ for idx, (
                 (
                     "Points",
                     "Rebounds",
-                    "Pts+Rebs+Asts",
                     "Assists",
-                    "3-PT-Made",
+                    "Pts+Rebs",
                     "Pts+Asts",
+                    "Rebs+Asts",
+                    "Pts+Rebs+Asts",
+                    "3-PT-Made",
                     "FG Made",
                     "Fantasy Score",
                 ),
@@ -162,6 +179,7 @@ if st.button("Calculate Probabilities", type="primary"):
 
         individual_probabilities: list[float] = []
         results_data: list[dict[str, str]] = []
+        detailed_results: list[DetailedResult] = []
 
         with st.spinner("Fetching player data..."):
             for pick in picks:
@@ -179,10 +197,11 @@ if st.button("Calculate Probabilities", type="primary"):
                         )
 
                         if result:
+                            # Access Pydantic attributes with dot notation
                             individual_probabilities.append(result.probability)
                             results_data.append(
                                 {
-                                    "Pick": f"pick {pick.pick_number}",
+                                    "Pick": f"Pick {pick.pick_number}",
                                     "Player": pick.player,
                                     "Stat": pick.stat_type,
                                     "Threshold": (
@@ -190,10 +209,19 @@ if st.button("Calculate Probabilities", type="primary"):
                                     ),
                                     "Probability": f"{result.probability:.1%}",
                                     "Hit Rate": (
-                                        f"{result.games_met}/" f"{result.total_games}"
+                                        f"{result.games_met}/{result.total_games}"
                                     ),
                                     "Avg": f"{result.mean:.1f}",
                                 }
+                            )
+
+                            # Store detailed results for game logs and visualization
+                            detailed_results.append(
+                                DetailedResult(
+                                    pick=pick,
+                                    result=result,
+                                    games_df=games_df
+                                )
                             )
 
         # Display individual results
@@ -219,7 +247,10 @@ if st.button("Calculate Probabilities", type="primary"):
                         help="Probability that all picks hit",
                     )
                 with col2:
-                    st.metric("Number of Picks", len(picks))
+                    st.metric(
+                        "Number of Picks", 
+                        len(picks)
+                    )
                 with col3:
                     if combined_probability > 0:
                         implied_odds = 1 / combined_probability
@@ -238,14 +269,134 @@ if st.button("Calculate Probabilities", type="primary"):
                 )
                 st.write(f"**{prob_breakdown} = {combined_probability:.2%}**")
 
-                fig_data = pd.DataFrame(
-                    {
-                        "Pick": [
-                            f"Pick {i+1}" for i in range(len(individual_probabilities))
-                        ],
-                        "Probability": individual_probabilities,
-                    }
-                )
-                st.bar_chart(fig_data.set_index("Pick"))
+                # Visual representation - Individual probabilities
+                prob_fig_data = pd.DataFrame({
+                    'Pick': [f"Pick {i+1}" for i in range(len(individual_probabilities))],
+                    'Probability': individual_probabilities
+                })
+                st.bar_chart(prob_fig_data.set_index('Pick'))
+                
+                st.divider()
+                
+                # Game-by-game grouped bar chart
+                st.subheader("Game-by-Game Performance (All Players)")
+                
+                # Create grouped bar chart using plotly
+                fig = go.Figure()
+                
+                if detailed_results:
+                    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+                    
+                    for idx, detail in enumerate(detailed_results):
+                        pick = detail.pick
+                        result = detail.result
+                        games_df = detail.games_df
+                        
+                        # Get dates and stats - result.stat_values is already a list
+                        game_dates = games_df['GAME_DATE'].tolist()
+                        game_dates.reverse()  # Chronological order
+                        stat_values = list(reversed(result.stat_values))
+                        
+                        # Create label for legend
+                        label = f"{pick.player} - {pick.stat_type}"
+                        
+                        fig.add_trace(go.Bar(
+                            name=label,
+                            x=game_dates,
+                            y=stat_values,
+                            marker_color=colors[idx % len(colors)],
+                            hovertemplate=f"{label}<br>Date: %{{x}}<br>Value: %{{y}}<extra></extra>"
+                        ))
+                    
+                    fig.update_layout(
+                        barmode='group',
+                        xaxis_title="Game Date",
+                        yaxis_title="Stat Value",
+                        legend_title="Players & Stats",
+                        height=500,
+                        hovermode='x unified'
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                st.divider()
+                
+                # Individual player game logs
+                st.subheader("Detailed Game Logs")
+                
+                for detail in detailed_results:
+                    pick = detail.pick
+                    result = detail.result
+                    games_df = detail.games_df
+                    
+                    with st.expander(f"📊 {pick.player} - {pick.stat_type} ({pick.prediction} {pick.threshold})"):
+                        # Create game log dataframe
+                        stat_values = pd.Series(result.stat_values)
+                        
+                        # Determine if threshold was met
+                        if pick.prediction == "More":
+                            met_threshold = stat_values > pick.threshold
+                        else:
+                            met_threshold = stat_values < pick.threshold
+                        
+                        # Create display dataframe
+                        display_df = pd.DataFrame({
+                            'Game Date': games_df['GAME_DATE'].values,
+                            'Matchup': games_df['MATCHUP'].values,
+                            'Pick Type': pick.stat_type,
+                            'Value': stat_values.round(1),
+                            'Threshold': f"{pick.prediction} {pick.threshold}",
+                            'Hit': met_threshold.map({True: '✅', False: '❌'})
+                        })
+                        
+                        st.dataframe(display_df, use_container_width=True, hide_index=True)
+                        
+                        # Individual player line chart
+                        st.write("**Game-by-Game Trend**")
+                        
+                        # Create line chart with threshold line
+                        chart_df = display_df[['Game Date', 'Value']].copy()
+                        chart_df = chart_df.iloc[::-1]  # Reverse for chronological order
+                        
+                        individual_fig = go.Figure()
+                        
+                        # Add stat values line
+                        individual_fig.add_trace(go.Scatter(
+                            x=chart_df['Game Date'],
+                            y=chart_df['Value'],
+                            mode='lines+markers',
+                            name=pick.stat_type,
+                            line=dict(color='blue', width=2),
+                            marker=dict(size=8)
+                        ))
+                        
+                        # Add threshold line
+                        individual_fig.add_trace(go.Scatter(
+                            x=chart_df['Game Date'],
+                            y=[pick.threshold] * len(chart_df),
+                            mode='lines',
+                            name=f"Threshold ({pick.threshold})",
+                            line=dict(color='red', width=2, dash='dash')
+                        ))
+                        
+                        individual_fig.update_layout(
+                            xaxis_title="Game Date",
+                            yaxis_title=pick.stat_type,
+                            height=300,
+                            showlegend=True
+                        )
+                        
+                        st.plotly_chart(individual_fig, use_container_width=True)
+                        
+                        # Stats summary - access Pydantic attributes with dot notation
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Mean", f"{result.mean:.1f}")
+                        with col2:
+                            st.metric("Median", f"{result.median:.1f}")
+                        with col3:
+                            st.metric("Min", f"{result.min:.0f}")
+                        with col4:
+                            st.metric("Max", f"{result.max:.0f}")
         else:
             st.error("Could not calculate probabilities for any picks.")
