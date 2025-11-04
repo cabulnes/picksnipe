@@ -7,6 +7,7 @@ and calculating prop bet probabilities based on historical performance.
 
 import time
 from typing import Literal
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
@@ -81,20 +82,91 @@ def get_player_id(player_name: str) -> int | None:
     return None
 
 
+def get_current_season() -> str:
+    """Get the current NBA season string (e.g., '2025-26')."""
+    now = datetime.now()
+    year = now.year
+    month = now.month
+    
+    # NBA season starts in October, so if we're in Oct-Dec, 
+    # the season is current_year to next_year
+    # If we're in Jan-Sep, the season started last year
+    if month >= 10:
+        return f"{year}-{str(year + 1)[-2:]}"
+    else:
+        return f"{year - 1}-{str(year)[-2:]}"
+
+
 def get_last_n_games(
-    player_id: int, n_games: int = 10, season: str = "2024-25"
+    player_id: int, n_games: int = 10, season: str | None = None
 ) -> pd.DataFrame | None:
-    """Get last N games for a player."""
+    """Get last N games for a player across multiple seasons if needed.
+    
+    Args:
+        player_id: NBA player ID
+        n_games: Number of games to retrieve
+        season: Season to start from (defaults to current season)
+    
+    Returns:
+        DataFrame with the most recent N games (or all available games)
+    """
     try:
-        time.sleep(0.6)  # Rate limit
-
-        gamelog = playergamelog.PlayerGameLog(
-            player_id=player_id, season=season, season_type_all_star="Regular Season"
-        )
-
-        df = gamelog.get_data_frames()[0]
-        return df.head(n_games)
-    except (ValueError, KeyError, IndexError, ConnectionError) as e:
+        # Use current season if not specified
+        if season is None:
+            season = get_current_season()
+        
+        all_games = []
+        year = int(season.split("-")[0])
+        seasons_to_check = 3  # Check up to 3 seasons back
+        
+        for i in range(seasons_to_check):
+            season_year = year - i
+            season_str = f"{season_year}-{str(season_year + 1)[-2:]}"
+            
+            try:
+                time.sleep(0.6)  # Rate limit
+                
+                gamelog = playergamelog.PlayerGameLog(
+                    player_id=player_id, 
+                    season=season_str, 
+                    season_type_all_star="Regular Season"
+                )
+                df = gamelog.get_data_frames()[0]
+                
+                if not df.empty:
+                    all_games.append(df)
+                    
+                # Stop if we have enough games
+                total_games = sum(len(games) for games in all_games)
+                if total_games >= n_games:
+                    break
+                    
+            except Exception:
+                # Continue to next season if this one fails
+                continue
+        
+        if all_games:
+            # Combine and sort all games
+            combined_df = pd.concat(all_games, ignore_index=True)
+            combined_df['GAME_DATE'] = pd.to_datetime(combined_df['GAME_DATE'])
+            combined_df = combined_df.sort_values('GAME_DATE', ascending=False)
+            
+            # Take up to n_games
+            result_df = combined_df.head(n_games)
+            
+            # Show info if fewer games available
+            if len(result_df) < n_games:
+                st.info(
+                    f"Only {len(result_df)} games available for this player "
+                    f"(requested {n_games}). Using all available games."
+                )
+            
+            return result_df
+        else:
+            st.warning(f"No game data found for player ID {player_id}")
+            return None
+            
+    except Exception as e:
         st.error(f"Error fetching data: {e}")
         return None
 
